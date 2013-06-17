@@ -1,14 +1,18 @@
 package Mojolicious::Plugin::LiquidToMojo;
 use Mojo::Base 'Mojolicious::Plugin';
 use POSIX qw|strftime|;
-use Mojo::Util qw|xml_escape|;
+use Mojo::Util qw|xml_escape trim quote unquote|;
 use HTML::Restrict;
+use Scalar::Util qw|looks_like_number|;
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 my $plugin;
 
-has code => '';
+has code          => '';
+has where_count   => 0;
+has case_variable => '';
+
 
 has capture_start     => 'capture';
 has capture_end       => 'endcapture';
@@ -18,13 +22,14 @@ has tag_start         => '{%';
 has tag_end           => '%}';
 has tree              => sub { [] };
 
-sub testing { $plugin = shift }
+sub testing { $plugin = shift; has stash => sub { {} } }
 sub register {
 	my ($self, $app) = @_;
 
 	$plugin = $self;
 	$app->helper(liquid_to_mojo => \&liquid_to_mojo);
 	$app->helper(date_liquid_filter => \&date_liquid_filter);
+	$app->helper(contains_liquid_filter => \&contains_liquid_filter);
 	$app->helper(plus_liquid_filter => \&plus_liquid_filter);
 	$app->helper(size_liquid_filter => \&size_liquid_filter);
 	$app->helper(escape_liquid_filter => \&escape_liquid_filter);
@@ -119,16 +124,16 @@ sub build {
 				next;
 			}
 
-			$self->_trim($value);
+			$value = trim($value);
 
 			# Code
 			if($type eq 'code'){
-				$lines[-1] .= '<% '. $value .' %>';
+				$lines[-1] .= '<% '. $self->_process_code($value) .' %>';
 			}
 
 			# Expression
 			if($type eq 'expr'){
-				$lines[-1] .= '<%== '. $self->_build_expression($self->_parse_expression($value)) .' %>';
+				$lines[-1] .= '<%== '. $self->_process_expression($value) .' %>';
 			}
 		}
 	}
@@ -136,21 +141,31 @@ sub build {
 	return $self->code($self->_wrap(\@lines))->tree([]);
 }
 
-sub _parse_expression {
+sub _process_code {
+	my ($self, $code) = @_;
+	my ($modifier, $statement) = split /\s+/, $code, 2;
+
+	$_ = '_'. $modifier;
+	return $self->$_($statement) if $self->can($_);
+
+	die "Uknown modifier '$modifier'";
+}
+
+sub _process_expression {
 	my ($self, $expression) = @_;
 	
 	my @expression = split /\s*\|\s*/, $expression;
 
-	return \@expression;
+	return $self->_build_expression(\@expression);
 }
 
 sub _build_expression {
 	my ($self, $filters) = @_;
 	my $token = pop $filters;
 
-	return $self->_build_value($self->_parse_value($token)) unless scalar @$filters;
+	return $self->_process_value($token) unless scalar @$filters;
 
-	my $filter     = $self->_parse_filter($token);
+	my $filter     = $self->_process_filter($token);
 	my $expression = $self->_build_expression($filters);
 
 	$expression .= '->' if $token =~ /^(?:first|last)/ && ($expression !~ /^\$/ || $expression !~ /\->/);
@@ -160,61 +175,115 @@ sub _build_expression {
 	return $filter;
 }
 
-sub _parse_value {
+sub _process_value {
 	my ($self, $token) = @_;
 	
+	return '' unless defined $token || $token =~ /^$/;
+	return $token if $token =~ /^[^\w\d_]/ || $token =~ /^[\d\.]+$/;
+
 	my @value = split /\./, $token || '';
 
-	return \@value;
-}
-
-sub _build_value {
-	my ($self, $value) = @_;
-	
-	$value->[0] = '' unless defined $value->[0];
-	return $value->[0] if $value->[0] =~ /^['"\[\(]/ or $value->[0] =~ /^$/ or $value->[0] =~ /^[\d\.]+$/;
-
-	my $first = '$'. shift $value;
+	my $first = '$'. shift @value;
 	$first =~ s/(?<=[\w_])(\[\d+\])/->$1/;
 
-	if(scalar @$value){
-		s/^([\w_]+)/{$1}/ for @$value;
-		$value->[0] = '->'. $value->[0];
+	if(scalar @value){
+		s/^([\w_]+)/{$1}/ for @value;
+		$value[0] = '->'. $value[0];
 	}
 
-	return join '', $first, @$value;
+	return join '', $first, @value;
 }
 
-sub _parse_filter {
+sub _process_filter {
 	my ($self, $token) = @_;
-	
-	# my @filter = $token =~ /^([\w_]+)(?:\:\s*(.+))?$/;
 	my ($filter, $options) = split /:\s*/, $token, 2;
 
-	return $self->_build_filter($filter, $options);
-}
-
-sub _build_filter {
-	my ($self, $filter, $options) = @_;
-	
 	$_ = '_'. $filter;
 	return $self->$_($options) if $self->can($_);
-	die "Uknown filter '$filter'";
-}
 
-sub _trim {
-	map {s/^\s+//;s/\s+$//;$_} $_[1];
+	die "Uknown filter '$filter'";
 }
 
 sub _wrap {
 	my ($self, $lines) = @_;
 	
-	my $code = join "\n", @$lines;
+	my $code = join "", @$lines;
 
 	return $code;
 }
 
+# Modifiers defenitions
+sub _generic_condition {
+	my ($self, $statement) = @_;
+	my $code = '';
 
+	for my $condition (split /\s*(\s(?:and|or)\s)\s*/, $statement){
+		$code .= $self->_build_condition($condition);
+	}
+
+	return $code;
+}
+
+sub _build_condition {
+	my ($self, $condition) = @_;
+	my $token;
+
+	my @values = split /\s*(\s(?:==|!=|>|<|>=|<=|contains)\s)\s*/, $condition;
+
+	if(scalar @values > 1){
+		if($values[2] eq 'empty' || $values[0] eq 'empty'){
+			$_ = $values[1];
+			$values[0] = $values[2] if $values[0] eq 'empty';
+			@values = (($values[1] eq ' == ' ? '!' : '') .'@{ '. $self->_process_value($values[0]) .' }');
+		}elsif($values[1] eq ' contains '){
+			@values = ($values[0] .' | contains:'. $values[2]);
+		}else{
+			$values[1] = $values[1] eq ' == ' ? ' eq ' : ' ne ' if ($values[1] eq ' == ' || $values[1] eq ' != ') && !looks_like_number($values[0]) && !looks_like_number($values[2]);
+		}
+	}
+
+	return join('', map($self->_process_expression($_), @values));
+}
+sub _case {
+	my ($self, $variable) = @_;
+	$self->case_variable($variable);
+	$self->where_count(0);
+	return '';
+}
+sub _when {
+	my ($self, $statement) = @_;
+	my $modifier = '}elsif( ';
+	
+	$modifier = 'if( ' if $self->where_count == 0;
+
+	$self->where_count($self->where_count + 1);
+	$statement = join '', map { m/ (?:and|or) / ? $_ : $self->case_variable .' == '. $_ } split /\s*(\s(?:and|or)\s)\s*/, $statement;
+
+	return $modifier . $self->_generic_condition($statement) . ' ){';
+}
+sub _if { 'if( '. shift->_generic_condition(shift) .' ){' }
+sub _elsif { '}elsif( '. shift->_generic_condition(shift) .' ){' }
+sub _unless { 'unless( '. shift->_generic_condition(shift) .' ){' }
+sub _else { '}else{' }
+sub _endif { '}' }
+sub _endcase { '}' }
+sub _endunless { '}' }
+sub _cycle { ' %><%== cycle_liquid_iterator( '. quote($_[1]) .' ) %><% ' }
+sub cycle_liquid_iterator {
+	my ($self, $collection) = @_;
+
+	$collection = unquote($collection);
+	$collection =~ s/'(group\s*.+?)':\s*//;
+	my $group = ($1 || $collection) .' liquid_cycle';
+
+	$self->stash->{$group} = [ map /^['"](.+)['"]$/, split /,\s*/, $collection ] unless exists $self->stash->{$group};
+	push $self->stash->{$group}, shift $self->stash->{$group};
+
+	return $self->stash->{$group}[-1];
+}
+
+
+# Filters definitions
 sub date_liquid_filter {
 	my ($self, $format, $input) = @_;
 	
@@ -239,10 +308,17 @@ sub escape_once_liquid_filter {
 }
 sub plus_liquid_filter {
 	my ($self, $value, $input) = @_;
-	return $input . $value if $input ^ $input && $value ^ $value;
-	return $input + $value;
+	return $input + $value if looks_like_number($input) || looks_like_number($value);
+	return $input . $value;
 }
 sub strip_html_liquid_filter { return HTML::Restrict->new()->process($_[1]) }
+sub contains_liquid_filter {
+	my ($self, $value, $array) = @_;
+	return scalar grep($value eq $_, @$array) if ref $array eq 'ARRAY';
+	return $array =~ /$value/ unless ref $array;
+	return;
+}
+
 
 sub _simple_filter {
 	my ($self, $filter, $options) = @_;
@@ -294,12 +370,12 @@ sub _truncatewords {
 }
 sub _prepend {
 	my ($self, $options) = @_;
-	$options = $self->_build_value($self->_parse_value($options));
+	$options = $self->_process_value($options);
 	return $options .'.{{expression}}';
 }
 sub _append {
 	my ($self, $options) = @_;
-	$options = $self->_build_value($self->_parse_value($options));
+	$options = $self->_process_value($options);
 	return '{{expression}}.'. $options;
 }
 sub _math {
@@ -318,6 +394,8 @@ sub _split {
 	$options = $1 if $options =~ /^['"](.+)['"]$/;
 	return "split( /$options/, {{expression}} )";
 }
+sub _contains { shift->_simple_filter('contains_liquid_filter', shift) }
+
 1;
 __END__
 
