@@ -13,8 +13,6 @@ has code          => '';
 has where_count   => 0;
 has case_variable => '';
 
-has capture_start     => 'capture';
-has capture_end       => 'endcapture';
 has expression_start  => '{{';
 has expression_end    => '}}';
 has tag_start         => '{%';
@@ -47,8 +45,6 @@ sub parse {
 	
 	my $tree = $self->tree;
 
-	my $cpst      = $self->capture_start;
-	my $cpen      = $self->capture_end;
 	my $exp_start = $self->expression_start;
 	my $exp_end   = $self->expression_end;
 	my $tag_start = $self->tag_start;
@@ -56,11 +52,7 @@ sub parse {
 
 	my $token_re = qr/
 		(
-			\Q$tag_start\E\s*\Q$cpst\E
-		|
 			\Q$tag_start\E
-		|
-			\Q$cpen\E\s*\Q$tag_end\E
 		|
 			\Q$tag_end\E
 		|
@@ -178,6 +170,8 @@ sub _process_value {
 	my ($self, $token) = @_;
 	
 	return '' unless defined $token || $token =~ /^$/;
+	return "''" if  $token eq 'false';
+	return 1 if $token eq 'true';
 	return $token if $token =~ /^[^\w\d_]/ || looks_like_number($token);
 
 	my @value = split /\./, $token || '';
@@ -325,7 +319,14 @@ sub cycle_liquid_iterator {
 
 	return $self->stash->{$group}[-1];
 }
+sub _assign {
+	my ($self, $string) = @_;
+	my ($variable, $value) = split /\s+=\s+/, $string, 2;
 
+	return 'my '. $self->_process_value($variable) .' = '. $self->_process_value($value);
+}
+sub _capture { return 'my '. shift->_process_value(shift) .' = begin' }
+sub _endcapture { 'end' }
 
 # Filters definitions
 sub date_liquid_filter {
@@ -378,7 +379,6 @@ sub _first {
 	my $filter = '{{expression}}';
 	$index = 0 unless $index || 1 == -1;
 
-	# $filter .= '->' if $filter !~ /^\$/ || $filter !~ /\->/;
 	return $filter .'['. $index .']';
 }
 sub _last { shift->_first(-1) }
