@@ -13,7 +13,6 @@ has code          => '';
 has where_count   => 0;
 has case_variable => '';
 
-
 has capture_start     => 'capture';
 has capture_end       => 'endcapture';
 has expression_start  => '{{';
@@ -179,9 +178,15 @@ sub _process_value {
 	my ($self, $token) = @_;
 	
 	return '' unless defined $token || $token =~ /^$/;
-	return $token if $token =~ /^[^\w\d_]/ || $token =~ /^[\d\.]+$/;
+	return $token if $token =~ /^[^\w\d_]/ || looks_like_number($token);
 
 	my @value = split /\./, $token || '';
+
+	if($value[0] eq 'forloop'){
+		$_ = '_for_'. $value[1];
+		return $self->$_() if $self->can($_);
+		die "Uknown forloop helper '$value[1]'";
+	}
 
 	my $first = '$'. shift @value;
 	$first =~ s/(?<=[\w_])(\[\d+\])/->$1/;
@@ -268,6 +273,45 @@ sub _else { '}else{' }
 sub _endif { '}' }
 sub _endcase { '}' }
 sub _endunless { '}' }
+
+sub _for {
+	my ($self, $statement) = @_;
+	my ($start, $end, $reversed);
+	my ($variable, $expression) = split /\s+in\s+/, $statement, 2;
+
+	if($expression =~ s/\s+offset:\s*(\S+)//){
+		$start = $self->_process_value($1);
+		$end   = '$#_liquid_array';
+	}
+
+	if($expression =~ s/\s+limit:\s*(\S+)//){
+		$start //= 0;
+		$end = $start .' + ('. $self->_process_value($1) .' - 1)';
+	}
+
+	$reversed = 1 if $expression =~ s/\s+reversed//;
+
+	if(my @range = $expression =~ /\(\s*(\S+)\s*\.\.\s*(\S+)\s*\)/){
+		$expression = 'my @_liquid_array = ( '. join('..', map($self->_process_expression($_), @range)). ' ); ';
+	}else{
+		$expression = 'my @_liquid_array = @{ '. $self->_process_expression($expression) .' }; ';
+	}
+
+	$expression .= '@_liquid_array = @_liquid_array[ '. $start .' .. '. $end .' ]; ' if defined $start;
+	$expression .= '@_liquid_array = reverse( @_liquid_array ); ' if $reversed;
+
+	return '{ '. $expression .'for( my $_liquid_index = 0; $_liquid_index <= $#_liquid_array; $_liquid_index++ ){ my '.
+		$self->_process_value($variable) .' = $_liquid_array[$_liquid_index];';
+}
+sub _endfor { '} }' }
+sub _for_length { 'scalar(@_liquid_array)' }
+sub _for_index { '$_liquid_index + 1' }
+sub _for_index0 { '$_liquid_index' }
+sub _for_rindex { 'scalar(@_liquid_array) - $_liquid_index - 1' }
+sub _for_rindex0 { '$#_liquid_array - $_liquid_index' }
+sub _for_first { '$_liquid_index == 0' }
+sub _for_last { '$_liquid_index == $#_liquid_array' }
+
 sub _cycle { ' %><%== cycle_liquid_iterator( '. quote($_[1]) .' ) %><% ' }
 sub cycle_liquid_iterator {
 	my ($self, $collection) = @_;
