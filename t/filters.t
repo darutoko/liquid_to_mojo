@@ -36,6 +36,7 @@ is($ltm->liquid_to_mojo(qq~{{ 4 | divided_by:2 }}~), qq~<%== 4 / 2 %>\n~, 'divid
 is($ltm->liquid_to_mojo(qq~{{ 4 | modulo:2 }}~), qq~<%== 4 % 2 %>\n~, 'modulo');
 is($ltm->liquid_to_mojo(qq~{{ 'some text' | split:, }}~), qq~<%== split( /,/, 'some text' ) %>\n~, 'split');
 is($ltm->liquid_to_mojo(qq~{{ 'some text' | split:', ' }}~), qq~<%== split( /, /, 'some text' ) %>\n~, 'split with commas');
+is($ltm->liquid_to_mojo(qq~{{ array | contains:5 }}~), qq~<%== contains_liquid_filter( 5, \$array ) %>\n~, 'contains');
 
 TODO: {
 	local $TODO = q~Don't know how it should be used or behaved~;
