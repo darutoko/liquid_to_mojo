@@ -211,6 +211,9 @@ sub _wrap {
 	return $code;
 }
 
+sub _raw { '' }
+sub _comment { '' }
+
 # Modifiers defenitions
 sub _generic_condition {
 	my ($self, $statement) = @_;
@@ -445,7 +448,7 @@ __END__
 
 =head1 NAME
 
-Mojolicious::Plugin::LiquidToMojo - Mojolicious Plugin
+Mojolicious::Plugin::LiquidToMojo - Liquid to mojo plugin
 
 =head1 SYNOPSIS
 
@@ -455,14 +458,42 @@ Mojolicious::Plugin::LiquidToMojo - Mojolicious Plugin
   # Mojolicious::Lite
   plugin 'LiquidToMojo';
 
+  # Convert Liquid template
+  my $ep_template = app->liquid_to_mojo($liquid_template);
+
 =head1 DESCRIPTION
 
-L<Mojolicious::Plugin::LiquidToMojo> is a L<Mojolicious> plugin.
+L<Mojolicious::Plugin::LiquidToMojo> is a L<Mojolicious> plugin 
+for convertion L<Liquid|https://github.com/Shopify/liquid> templates
+in to L<Mojolicious> or Embedded Perl (.ep) templates.
+
+Note that C<map> and C<escape_once> filters, C<raw> and C<comment> tags
+are not implemented.
+
+=head1 HELPERS
+
+L<Mojolicious::Plugin::LiquidToMojo> registers the following helpers
+to mock behavior of filters.
+
+C<date_liquid_filter>, C<contains_liquid_filter>, C<plus_liquid_filter>, C<size_liquid_filter>
+C<escape_liquid_filter>, C<capitalize_liquid_filter>, C<strip_html_liquid_filter> 
 
 =head1 METHODS
 
 L<Mojolicious::Plugin::LiquidToMojo> inherits all methods from
 L<Mojolicious::Plugin> and implements the following new ones.
+
+=head2 build
+
+  $plugin = $plugin->build;
+
+Build L<Mojolicious> template from tree.
+
+=head2 parse
+
+  $plugin = $plugin->parse($liquid_template);
+
+Parse liquid template into tree.
 
 =head2 register
 
