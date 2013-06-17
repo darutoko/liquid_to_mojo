@@ -505,4 +505,8 @@ Register plugin in L<Mojolicious> application.
 
 L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicio.us>.
 
+=head1 AUTHOR
+
+darutoko <darutoko@cpan.org>
+
 =cut
