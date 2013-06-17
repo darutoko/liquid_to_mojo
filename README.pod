@@ -13,6 +13,13 @@ Mojolicious::Plugin::LiquidToMojo - Liquid to mojo plugin
   # Convert Liquid template
   my $ep_template = app->liquid_to_mojo($liquid_template);
 
+  # All "objects" should be hashref, arrayref, or simple scalar
+  foo            # => $foo
+  foo.bar        # => $foo->{bar}
+  foo[0]         # => $foo->[0]
+  foo.bar.baz    # => $foo->{bar}{baz}
+  foo.bar.baz[0] # => $foo->{bar}{baz}[0]
+
 =head1 DESCRIPTION
 
 L<Mojolicious::Plugin::LiquidToMojo> is a L<Mojolicious> plugin 
